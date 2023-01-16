@@ -1,6 +1,7 @@
 import express from "express";
 import { PrismaClient } from "@prisma/client";
 import { config } from "dotenv";
+import cors from "cors";
 
 config();
 
@@ -8,22 +9,41 @@ function randomToken(): string {
   return Math.random().toString(36).substr(2);
 }
 
-const CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
-const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
-
-if (!CLIENT_ID || !CLIENT_SECRET) {
-  throw new Error("Google client id and secret must be set");
-}
-
 const prisma = new PrismaClient();
 const app = express();
 const port = 3000;
+
+app.use(cors());
+app.use(express.json());
+
+app.get("/me", async (req, res) => {
+  const token = req.headers.authorization;
+
+  if (!token) {
+    res.status(400).send({ error: "Authorization header is required" });
+    return;
+  }
+
+  const user = await prisma.user.findUnique({
+    where: {
+      token,
+    },
+  });
+
+  if (!user) {
+    res.status(400).send({ error: "Invalid token" });
+    return;
+  }
+
+  res.send(user);
+});
 
 app.post("/login", async (req, res) => {
   const { username, password } = req.body;
 
   if (!username || !password) {
-    res.status(400).send("Username and password are required");
+    res.status(400).send({ error: "Username and password are required" });
+    return;
   }
 
   const user = await prisma.user.findUnique({
@@ -49,16 +69,22 @@ app.post("/register", async (req, res) => {
   }
 
   const token = randomToken();
+  let user: any;
 
-  const user = await prisma.user.create({
-    data: {
-      username,
-      password,
-      token,
-    },
-  });
+  try {
+    user = await prisma.user.create({
+      data: {
+        username,
+        password,
+        token,
+      },
+    });
+  } catch (err) {
+    res.status(400).send({ error: "Username already exists" });
+    return;
+  }
 
-  res.send(user);
+  res.send({ token: user.token });
 });
 
 app.get("/notes", async (req, res) => {
@@ -80,7 +106,7 @@ app.get("/notes", async (req, res) => {
   });
 
   if (!user) {
-    res.status(400).send("Invalid token");
+    res.status(400).send({ error: "Invalid token" });
     return;
   }
 
@@ -94,7 +120,7 @@ app.post("/notes", async (req, res) => {
   const token = req.headers.authorization;
 
   if (!token) {
-    res.status(400).send("Authorization header is required");
+    res.status(400).send({ error: "Authorization header is required" });
     return;
   }
 
@@ -105,7 +131,21 @@ app.post("/notes", async (req, res) => {
   });
 
   if (!user) {
-    res.status(400).send("Invalid token");
+    res.status(400).send({ error: "Invalid token" });
+    return;
+  }
+
+  const { notes } = req.body;
+
+  if (notes) {
+    const createNotes = await prisma.note.createMany({
+      data: notes.map((note: any) => ({
+        ...note,
+        userId: user.id,
+      })),
+    });
+
+    res.send(createNotes);
     return;
   }
 
